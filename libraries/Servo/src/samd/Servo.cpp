@@ -21,27 +21,49 @@
 #include <Arduino.h>
 #include <Servo.h>
 
-#if defined(__SAMD51__)
- // Different prescalers depending on FCPU (avoid overflowing 16-bit counter)
- #if(F_CPU > 200000000)
-  #define usToTicks(_us)    ((clockCyclesPerMicrosecond() * _us) / 128)
-  #define ticksToUs(_ticks) (((unsigned) _ticks * 128) / clockCyclesPerMicrosecond())
- #else
-  #define usToTicks(_us)    ((clockCyclesPerMicrosecond() * _us) / 64)
-  #define ticksToUs(_ticks) (((unsigned) _ticks * 64) / clockCyclesPerMicrosecond())
- #endif
+
+// use different prescalers depending on F_CPU (avoid overflowing 16-bit counter)
+#if(F_CPU >  197000000) // more than 197 MHz (up to ~7.7 GHz, more than any SAMD MCU)
+  #define GCLK_PRESCALER (256)
+  #define TC_CTRLA_PRESCALER_USED TC_CTRLA_PRESCALER_DIV256
+#elif(F_CPU > 49000000) // between 49 MHz and 197 MHz (--> SAMD51@120MHz)
+  #define GCLK_PRESCALER (64)
+  #define TC_CTRLA_PRESCALER_USED TC_CTRLA_PRESCALER_DIV64
+#elif(F_CPU > 24000000) // between 24 MHz and 49 MHz (--> SAMD21@48MHz)
+  #define GCLK_PRESCALER (16)
+  #define TC_CTRLA_PRESCALER_USED TC_CTRLA_PRESCALER_DIV16
+#elif(F_CPU > 12000000) // between 12 MHz and 24 MHz
+  #define GCLK_PRESCALER (8)
+  #define TC_CTRLA_PRESCALER_USED TC_CTRLA_PRESCALER_DIV8
+#elif(F_CPU >  6000000) // between 6 MHz and 12 MHz
+  #define GCLK_PRESCALER (4)
+  #define TC_CTRLA_PRESCALER_USED TC_CTRLA_PRESCALER_DIV4
+#elif(F_CPU >  3000000) // between 3 MHz and 6 MHz
+  #define GCLK_PRESCALER (2)
+  #define TC_CTRLA_PRESCALER_USED TC_CTRLA_PRESCALER_DIV2
+#elif(F_CPU <= 3000000) // less than 3 MHz
+  #define GCLK_PRESCALER (1)
+  #define TC_CTRLA_PRESCALER_USED TC_CTRLA_PRESCALER_DIV1
 #else
- #define usToTicks(_us)    ((clockCyclesPerMicrosecond() * _us) / 16)                 // converts microseconds to tick
- #define ticksToUs(_ticks) (((unsigned) _ticks * 16) / clockCyclesPerMicrosecond())   // converts from ticks back to microseconds
+  #error unsupported CPU clock frequency
 #endif
 
-#define TRIM_DURATION  5                                   // compensation ticks to trim adjust for digitalWrite delays
+// convert microseconds to ticks
+#define usToTicks(_us)    ((clockCyclesPerMicrosecond() * _us) / (GCLK_PRESCALER))
+// converts from ticks back to microseconds
+#define ticksToUs(_ticks) (((unsigned) _ticks * (GCLK_PRESCALER)) / clockCyclesPerMicrosecond())
+ 
+// compensation ticks to trim adjust for digitalWrite delays
+#define TRIM_DURATION  5
 
-static servo_t servos[MAX_SERVOS];                         // static array of servo structures
+// static array of servo structures
+static servo_t servos[MAX_SERVOS];
 
-uint8_t ServoCount = 0;                                    // the total number of attached servos
+// the total number of attached servos
+uint8_t ServoCount = 0;
 
-static volatile int8_t currentServoIndex[_Nbr_16timers];   // index for the servo being pulsed for each timer (or -1 if refresh interval)
+// index for the servo being pulsed for each timer (or -1 if refresh interval)
+static volatile int8_t currentServoIndex[_Nbr_16timers];
 
 // convenience macros
 #define SERVO_INDEX_TO_TIMER(_servo_nbr) ((timer16_Sequence_t)(_servo_nbr / SERVOS_PER_TIMER))   // returns the timer controlling this servo
