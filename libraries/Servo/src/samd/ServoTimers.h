@@ -33,6 +33,29 @@
  * ---------------------
  */
 
+// taken from here: 
+// https://github.com/arduino/ArduinoModule-CMSIS-Atmel/blob/46ab1021146152a64caf1ddbb837d8181b8faa35/CMSIS-Atmel/CMSIS/Device/ATMEL/samd21/include/samd21.h
+#if defined(__SAMD21E16A__)  || defined(__ATSAMD21E16A__)  \
+||  defined(__SAMD21E17A__)  || defined(__ATSAMD21E17A__)  \
+||  defined(__SAMD21E18A__)  || defined(__ATSAMD21E18A__)  \
+||  defined(__SAMD21G15A__)  || defined(__ATSAMD21G15A__)  \
+||  defined(__SAMD21G16A__)  || defined(__ATSAMD21G16A__)  \
+||  defined(__SAMD21G17A__)  || defined(__ATSAMD21G17A__)  \
+||  defined(__SAMD21G17AU__) || defined(__ATSAMD21G17AU__) \
+||  defined(__SAMD21G18A__)  || defined(__ATSAMD21G18A__)  \
+||  defined(__SAMD21G18AU__) || defined(__ATSAMD21G18AU__) \
+||  defined(__SAMD21J15A__)  || defined(__ATSAMD21J15A__)  \
+||  defined(__SAMD21J16A__)  || defined(__ATSAMD21J16A__)  \
+||  defined(__SAMD21J16AC__) || defined(__ATSAMD21J16AC__) \
+||  defined(__SAMD21J17A__)  || defined(__ATSAMD21J17A__)  \
+||  defined(__SAMD21J17AC__) || defined(__ATSAMD21J17AC__) \
+||  defined(__SAMD21J18A__)  || defined(__ATSAMD21J18A__)  \
+||  defined(__SAMD21J18AC__) || defined(__ATSAMD21J18AC__)
+  #if !defined(__SAMD21__)
+    #define __SAMD21__
+  #endif
+#endif
+
 // For SAMD:
 #define _useTimer1
 //#define _useTimer2   // <- TODO do not activate until the code in Servo.cpp has been changed in order

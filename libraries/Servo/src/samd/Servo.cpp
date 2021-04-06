@@ -23,7 +23,8 @@
 
 
 // use different prescalers depending on F_CPU (avoid overflowing 16-bit counter)
-#if(F_CPU >  197000000) // more than 197 MHz (up to ~7.7 GHz, more than any SAMD MCU)
+// Note: There are no prescalers of size 32 or 128 for TC instances.
+#if(F_CPU >  197000000) // between 197 MHz and ~7.7 GHz (more than any SAMD MCU can do)
   #define GCLK_PRESCALER (256)
   #define TC_CTRLA_PRESCALER_USED TC_CTRLA_PRESCALER_DIV256
 #elif(F_CPU > 49000000) // between 49 MHz and 197 MHz (--> SAMD51@120MHz)
@@ -48,11 +49,15 @@
   #error unsupported CPU clock frequency
 #endif
 
-// convert microseconds to ticks
+// macro to convert microseconds to ticks
 #define usToTicks(_us)    ((clockCyclesPerMicrosecond() * _us) / (GCLK_PRESCALER))
-// converts from ticks back to microseconds
+// macro to convert ticks back to microseconds
 #define ticksToUs(_ticks) (((unsigned) _ticks * (GCLK_PRESCALER)) / clockCyclesPerMicrosecond())
- 
+
+// wrap around the counter after this number of tick corresponding PWM
+// frequency of 50 Hz <--> a refresh interval of 20 ms
+#define WRAPAROUND_TICKS  (usToTicks(REFRESH_INTERVAL))
+
 // compensation ticks to trim adjust for digitalWrite delays
 #define TRIM_DURATION  5
 
@@ -95,10 +100,10 @@ void Servo_Handler(timer16_Sequence_t timer, Tc *tc, uint8_t channel, uint8_t in
 {
     if (currentServoIndex[timer] < 0) {
         tc->COUNT16.COUNT.reg = (uint16_t) 0;
-#if defined(__SAMD51__)
-        while(tc->COUNT16.SYNCBUSY.bit.COUNT);
-#else
+#if defined(__SAMD21__)
         WAIT_TC16_REGS_SYNC(tc)
+#elif defined(__SAMD51__)
+        while(tc->COUNT16.SYNCBUSY.bit.COUNT);
 #endif
     } else {
         if (SERVO_INDEX(timer, currentServoIndex[timer]) < ServoCount && SERVO(timer, currentServoIndex[timer]).Pin.isActive == true) {
@@ -119,25 +124,25 @@ void Servo_Handler(timer16_Sequence_t timer, Tc *tc, uint8_t channel, uint8_t in
         // Note from datasheet: Prior to any read access, this register must be synchronized by user by writing the according TC
         // Command value to the Control B Set register (CTRLBSET.CMD=READSYNC)
         while (tc->COUNT16.SYNCBUSY.bit.CTRLB);
-	tc->COUNT16.CTRLBSET.bit.CMD = TC_CTRLBSET_CMD_READSYNC_Val;
+        tc->COUNT16.CTRLBSET.bit.CMD = TC_CTRLBSET_CMD_READSYNC_Val;
         while (tc->COUNT16.SYNCBUSY.bit.CTRLB);
 #endif
         uint16_t tcCounterValue = tc->COUNT16.COUNT.reg;
-#if defined(__SAMD51__)
-        while(tc->COUNT16.SYNCBUSY.bit.COUNT);
-#else
+#if defined(__SAMD21__)
         WAIT_TC16_REGS_SYNC(tc)
+#elif defined(__SAMD51__)
+        while(tc->COUNT16.SYNCBUSY.bit.COUNT);
 #endif
 
         tc->COUNT16.CC[channel].reg = (uint16_t) (tcCounterValue + SERVO(timer, currentServoIndex[timer]).ticks);
-#if defined(__SAMD51__)
+#if defined(__SAMD21__)
+        WAIT_TC16_REGS_SYNC(tc)
+#elif defined(__SAMD51__)
         if(channel == 0) {
             while(tc->COUNT16.SYNCBUSY.bit.CC0);
         } else if(channel == 1) {
             while(tc->COUNT16.SYNCBUSY.bit.CC1);
         }
-#else
-        WAIT_TC16_REGS_SYNC(tc)
 #endif
     }
     else {
@@ -145,10 +150,10 @@ void Servo_Handler(timer16_Sequence_t timer, Tc *tc, uint8_t channel, uint8_t in
 
         // Get the counter value
         uint16_t tcCounterValue = tc->COUNT16.COUNT.reg;
-#if defined(__SAMD51__)
-        while(tc->COUNT16.SYNCBUSY.bit.COUNT);
-#else
+#if defined(__SAMD21__)
         WAIT_TC16_REGS_SYNC(tc)
+#elif defined(__SAMD51__)
+        while(tc->COUNT16.SYNCBUSY.bit.COUNT);
 #endif
 
         if (tcCounterValue + 4UL < usToTicks(REFRESH_INTERVAL)) {   // allow a few ticks to ensure the next OCR1A not missed
@@ -157,14 +162,14 @@ void Servo_Handler(timer16_Sequence_t timer, Tc *tc, uint8_t channel, uint8_t in
         else {
             tc->COUNT16.CC[channel].reg = (uint16_t) (tcCounterValue + 4UL);   // at least REFRESH_INTERVAL has elapsed
         }
-#if defined(__SAMD51__)
+#if defined(__SAMD21__)
+        WAIT_TC16_REGS_SYNC(tc)
+#elif defined(__SAMD51__)
         if(channel == 0) {
             while(tc->COUNT16.SYNCBUSY.bit.CC0);
         } else if(channel == 1) {
             while(tc->COUNT16.SYNCBUSY.bit.CC1);
         }
-#else
-        WAIT_TC16_REGS_SYNC(tc)
 #endif
 
         currentServoIndex[timer] = -1;   // this will get incremented at the end of the refresh period to start again at the first channel
@@ -178,18 +183,18 @@ static inline void resetTC (Tc* TCx)
 {
     // Disable TCx
     TCx->COUNT16.CTRLA.reg &= ~TC_CTRLA_ENABLE;
-#if defined(__SAMD51__)
-    while(TCx->COUNT16.SYNCBUSY.bit.ENABLE);
-#else
+#if defined(__SAMD21__)
     WAIT_TC16_REGS_SYNC(TCx)
+#elif defined(__SAMD51__)
+    while(TCx->COUNT16.SYNCBUSY.bit.ENABLE);
 #endif
 
     // Reset TCx
     TCx->COUNT16.CTRLA.reg = TC_CTRLA_SWRST;
-#if defined(__SAMD51__)
-    while(TCx->COUNT16.SYNCBUSY.bit.SWRST);
-#else
+#if defined(__SAMD21__)
     WAIT_TC16_REGS_SYNC(TCx)
+#elif defined(__SAMD51__)
+    while(TCx->COUNT16.SYNCBUSY.bit.SWRST);
 #endif
     while (TCx->COUNT16.CTRLA.bit.SWRST);
 }
@@ -198,14 +203,14 @@ static void _initISR(Tc *tc, uint8_t channel, uint32_t id, IRQn_Type irqn, uint8
 {
     (void)id;
     // Select GCLK0 as timer/counter input clock source
-#if defined(__SAMD51__)
+#if defined(__SAMD21__)
+    GCLK->CLKCTRL.reg = (uint16_t) (GCLK_CLKCTRL_CLKEN | GCLK_CLKCTRL_GEN_GCLK0 | GCLK_CLKCTRL_ID(gcmForTimer));
+    while (GCLK->STATUS.bit.SYNCBUSY);
+#elif defined(__SAMD51__)
     int idx = gcmForTimer;           // see datasheet Table 14-9
     GCLK->PCHCTRL[idx].bit.GEN  = 0; // Select GCLK0 as periph clock source
     GCLK->PCHCTRL[idx].bit.CHEN = 1; // Enable peripheral
     while(!GCLK->PCHCTRL[idx].bit.CHEN);
-#else
-    GCLK->CLKCTRL.reg = (uint16_t) (GCLK_CLKCTRL_CLKEN | GCLK_CLKCTRL_GEN_GCLK0 | GCLK_CLKCTRL_ID(gcmForTimer));
-    while (GCLK->STATUS.bit.SYNCBUSY);
 #endif
 
     // Reset the timer
@@ -215,10 +220,14 @@ static void _initISR(Tc *tc, uint8_t channel, uint32_t id, IRQn_Type irqn, uint8
     // Set timer counter mode to 16 bits
     tc->COUNT16.CTRLA.reg |= TC_CTRLA_MODE_COUNT16;
 
-#if defined(__SAMD51__)
+#if defined(__SAMD21__) // for SAMD21
+    // Set timer counter mode as normal PWM
+    tc->COUNT16.CTRLA.reg |= TC_CTRLA_WAVEGEN_NPWM;
+    // Set the prescaler factor to GCLK_TC/16.  At nominal 48MHz GCLK_TC this is 3000 ticks per millisecond
+    tc->COUNT16.CTRLA.reg |= (uint16_t) TC_CTRLA_PRESCALER_USED;
+#elif defined(__SAMD51__)
     // Set timer counter mode as normal PWM
     tc->COUNT16.WAVE.bit.WAVEGEN = TCC_WAVE_WAVEGEN_NPWM_Val;
-
     // Set the prescaler factor to 64 or 128 depending on FCPU
     // (avoid overflowing 16-bit clock counter)
  #if(F_CPU > 200000000)
@@ -227,32 +236,26 @@ static void _initISR(Tc *tc, uint8_t channel, uint32_t id, IRQn_Type irqn, uint8
     // At 120-200 MHz GCLK this is 1875-3125 ticks per millisecond
     tc->COUNT16.CTRLA.bit.PRESCALER = TCC_CTRLA_PRESCALER_DIV64_Val;
  #endif
-#else
-    // Set timer counter mode as normal PWM
-    tc->COUNT16.CTRLA.reg |= TC_CTRLA_WAVEGEN_NPWM;
-
-    // Set the prescaler factor to GCLK_TC/16.  At nominal 48MHz GCLK_TC this is 3000 ticks per millisecond
-    tc->COUNT16.CTRLA.reg |= TC_CTRLA_PRESCALER_DIV16;
 #endif
 
     // Count up
     tc->COUNT16.CTRLBCLR.bit.DIR = 1;
-#if defined(__SAMD51__)
-    while(tc->COUNT16.SYNCBUSY.bit.CTRLB);
-#else
+#if defined(__SAMD21__)
     WAIT_TC16_REGS_SYNC(tc)
+#elif defined(__SAMD51__)
+    while(tc->COUNT16.SYNCBUSY.bit.CTRLB);
 #endif
 
     // First interrupt request after 1 ms
     tc->COUNT16.CC[channel].reg = (uint16_t) usToTicks(1000UL);
-#if defined(__SAMD51__)
+#if defined(__SAMD21__)
+    WAIT_TC16_REGS_SYNC(tc)
+#elif defined(__SAMD51__)
     if(channel == 0) {
         while(tc->COUNT16.SYNCBUSY.bit.CC0);
     } else if(channel == 1) {
         while(tc->COUNT16.SYNCBUSY.bit.CC1);
     }
-#else
-    WAIT_TC16_REGS_SYNC(tc)
 #endif
 
     // Configure interrupt request
@@ -267,10 +270,10 @@ static void _initISR(Tc *tc, uint8_t channel, uint32_t id, IRQn_Type irqn, uint8
 
     // Enable the timer and start it
     tc->COUNT16.CTRLA.reg |= TC_CTRLA_ENABLE;
-#if defined(__SAMD51__)
-    while(tc->COUNT16.SYNCBUSY.bit.ENABLE);
-#else
+#if defined(__SAMD21__)
     WAIT_TC16_REGS_SYNC(tc)
+#elif defined(__SAMD51__)
+    while(tc->COUNT16.SYNCBUSY.bit.ENABLE);
 #endif
 }
 
