@@ -33,8 +33,8 @@
  * ---------------------
  */
 
-// taken from here: 
-// https://github.com/arduino/ArduinoModule-CMSIS-Atmel/blob/46ab1021146152a64caf1ddbb837d8181b8faa35/CMSIS-Atmel/CMSIS/Device/ATMEL/samd21/include/samd21.h
+// processor list taken from here: 
+// https://github.com/arduino/ArduinoModule-CMSIS-Atmel/blob/master/CMSIS-Atmel/CMSIS/Device/ATMEL/samd21/include/samd21.h
 #if defined(__SAMD21E16A__)  || defined(__ATSAMD21E16A__)  \
 ||  defined(__SAMD21E17A__)  || defined(__ATSAMD21E17A__)  \
 ||  defined(__SAMD21E18A__)  || defined(__ATSAMD21E18A__)  \
@@ -56,58 +56,47 @@
   #endif
 #endif
 
+/*
+ * Note:
+ * 
+ * TC4 and TC5 use the same peripheral clock. If we configure the clock
+ * for one of these, we WILL configure the clock for the other. This means
+ * that stuff on *both* TC instances will probably break when using this
+ * library (most notably PWM with analogWrite(), no matter if we actually 
+ * use both TC instances or only one.
+ */
+
 // For SAMD:
 #define _useTimer1
-//#define _useTimer2   // <- TODO do not activate until the code in Servo.cpp has been changed in order
+#define _useTimer2   // <- TODO do not activate until the code in Servo.cpp has been changed in order
                        //         to manage more than one channel per timer on the SAMD architecture
 
-#if defined(__SAMD51__) 
-  #if defined (_useTimer1)
-    #define TC_FOR_TIMER1             TC1
-    #define CHANNEL_FOR_TIMER1        0
-    #define INTENSET_BIT_FOR_TIMER_1  TC_INTENSET_MC0
-    #define INTENCLR_BIT_FOR_TIMER_1  TC_INTENCLR_MC0
-    #define INTFLAG_BIT_FOR_TIMER_1   TC_INTFLAG_MC0
-    #define ID_TC_FOR_TIMER1          ID_TC1
-    #define IRQn_FOR_TIMER1           TC1_IRQn
-    #define HANDLER_FOR_TIMER1        TC1_Handler
-    #define GCM_FOR_TIMER_1           TC1_GCLK_ID
-  #endif
-
-  #if defined (_useTimer2)
-    #define TC_FOR_TIMER2             TC1
-    #define CHANNEL_FOR_TIMER2        1
-    #define INTENSET_BIT_FOR_TIMER_2  TC_INTENSET_MC1
-    #define INTENCLR_BIT_FOR_TIMER_2  TC_INTENCLR_MC1
-    #define INTFLAG_BIT_FOR_TIMER_2   TC_INTFLAG_MC1
-    #define ID_TC_FOR_TIMER2          ID_TC1
-    #define IRQn_FOR_TIMER2           TC1_IRQn
-    #define HANDLER_FOR_TIMER2        TC1_Handler
-    #define GCM_FOR_TIMER_2           TC1_GCLK_ID
-  #endif
-#else
-  #if defined (_useTimer1)
-    #define TC_FOR_TIMER1             TC4
-    #define CHANNEL_FOR_TIMER1        0
-    #define INTENSET_BIT_FOR_TIMER_1  TC_INTENSET_MC0
-    #define INTENCLR_BIT_FOR_TIMER_1  TC_INTENCLR_MC0
-    #define INTFLAG_BIT_FOR_TIMER_1   TC_INTFLAG_MC0
-    #define ID_TC_FOR_TIMER1          ID_TC4
-    #define IRQn_FOR_TIMER1           TC4_IRQn
-    #define HANDLER_FOR_TIMER1        TC4_Handler
-    #define GCM_FOR_TIMER_1           GCM_TC4_TC5
-  #endif
-
-  #if defined (_useTimer2)
-    #define TC_FOR_TIMER2             TC4
-    #define CHANNEL_FOR_TIMER2        1
-    #define INTENSET_BIT_FOR_TIMER_2  TC_INTENSET_MC1
-    #define INTENCLR_BIT_FOR_TIMER_2  TC_INTENCLR_MC1
-    #define ID_TC_FOR_TIMER2          ID_TC4
-    #define IRQn_FOR_TIMER2           TC4_IRQn
-    #define HANDLER_FOR_TIMER2        TC4_Handler
-    #define GCM_FOR_TIMER_2           GCM_TC4_TC5
-  #endif
+#if defined(__SAMD21__)
+    #if defined (_useTimer1)
+        #define TIMER1_TC                 TC4          // TC instance to use. Pointer of type Tc.
+        #define TIMER1_IRQn               TC4_IRQn     // Interrupt line for this TC instance.
+        #define TIMER1_HANDLER            TC4_Handler  // ISR for this TC instance
+        #define TIMER1_GCLK_ID            TC4_GCLK_ID  // index of peripheral for GCLK
+    #endif
+    #if defined (_useTimer2)
+        #define TIMER2_TC                 TC5          // TC instance to use. Pointer of type Tc.
+        #define TIMER2_IRQn               TC5_IRQn     // Interrupt line for this TC instance.
+        #define TIMER2_HANDLER            TC5_Handler  // ISR for this TC instance
+        #define TIMER2_GCLK_ID            TC5_GCLK_ID  // index of peripheral for GCLK
+    #endif
+#elif defined(__SAMD51__) 
+    #if defined (_useTimer1)
+        #define TIMER1_TC                 TC5          // TC instance to use. Pointer of type Tc.
+        #define TIMER1_IRQn               TC5_IRQn     // Interrupt line for this TC instance.
+        #define TIMER1_HANDLER            TC5_Handler  // ISR for this TC instance
+        #define TIMER1_GCLK_ID            TC5_GCLK_ID  // index of peripheral for GCLK
+    #endif  
+    #if defined (_useTimer2)
+        #define TIMER2_TC                 TC4          // TC instance to use. Pointer of type Tc.
+        #define TIMER2_IRQn               TC4_IRQn     // Interrupt line for this TC instance.
+        #define TIMER2_HANDLER            TC4_Handler  // ISR for this TC instance
+        #define TIMER2_GCLK_ID            TC4_GCLK_ID  // index of peripheral for GCLK
+    #endif
 #endif
 
 typedef enum {
@@ -118,5 +107,10 @@ typedef enum {
     _timer2,
 #endif
     _Nbr_16timers } timer16_Sequence_t;
+
+typedef enum {
+    _cc0,
+    _cc1,
+    _Nbr_CC_registers } CC_register_t;
 
 #endif   // __SERVO_TIMERS_H__

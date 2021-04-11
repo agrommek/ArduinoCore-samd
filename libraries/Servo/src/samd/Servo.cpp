@@ -23,293 +23,383 @@
 
 
 // use different prescalers depending on F_CPU (avoid overflowing 16-bit counter)
-// Note: There are no prescalers of size 32 or 128 for TC instances.
+// Note: There are no prescalers of size 32 or 128 for TC instances!
 #if(F_CPU >  197000000) // between 197 MHz and ~7.7 GHz (more than any SAMD MCU can do)
-  #define GCLK_PRESCALER (256)
-  #define TC_CTRLA_PRESCALER_USED TC_CTRLA_PRESCALER_DIV256
+    #define GCLK_PRESCALER (256)
+    #define TC_CTRLA_PRESCALER_USED TC_CTRLA_PRESCALER_DIV256
 #elif(F_CPU > 49000000) // between 49 MHz and 197 MHz (--> SAMD51@120MHz)
-  #define GCLK_PRESCALER (64)
-  #define TC_CTRLA_PRESCALER_USED TC_CTRLA_PRESCALER_DIV64
+    #define GCLK_PRESCALER (64)
+    #define TC_CTRLA_PRESCALER_USED TC_CTRLA_PRESCALER_DIV64
 #elif(F_CPU > 24000000) // between 24 MHz and 49 MHz (--> SAMD21@48MHz)
-  #define GCLK_PRESCALER (16)
-  #define TC_CTRLA_PRESCALER_USED TC_CTRLA_PRESCALER_DIV16
+    #define GCLK_PRESCALER (16)
+    #define TC_CTRLA_PRESCALER_USED TC_CTRLA_PRESCALER_DIV16
 #elif(F_CPU > 12000000) // between 12 MHz and 24 MHz
-  #define GCLK_PRESCALER (8)
-  #define TC_CTRLA_PRESCALER_USED TC_CTRLA_PRESCALER_DIV8
+    #define GCLK_PRESCALER (8)
+    #define TC_CTRLA_PRESCALER_USED TC_CTRLA_PRESCALER_DIV8
 #elif(F_CPU >  6000000) // between 6 MHz and 12 MHz
-  #define GCLK_PRESCALER (4)
-  #define TC_CTRLA_PRESCALER_USED TC_CTRLA_PRESCALER_DIV4
+    #define GCLK_PRESCALER (4)
+    #define TC_CTRLA_PRESCALER_USED TC_CTRLA_PRESCALER_DIV4
 #elif(F_CPU >  3000000) // between 3 MHz and 6 MHz
-  #define GCLK_PRESCALER (2)
-  #define TC_CTRLA_PRESCALER_USED TC_CTRLA_PRESCALER_DIV2
+    #define GCLK_PRESCALER (2)
+    #define TC_CTRLA_PRESCALER_USED TC_CTRLA_PRESCALER_DIV2
 #elif(F_CPU <= 3000000) // less than 3 MHz
-  #define GCLK_PRESCALER (1)
-  #define TC_CTRLA_PRESCALER_USED TC_CTRLA_PRESCALER_DIV1
+    #define GCLK_PRESCALER (1)
+    #define TC_CTRLA_PRESCALER_USED TC_CTRLA_PRESCALER_DIV1
 #else
-  #error unsupported CPU clock frequency
+    #error unsupported CPU clock frequency
 #endif
 
+/*
+ * Nomenclature:
+ * 
+ * timer         The TC instance in use. Every TC instance can handle up to 12 servos.
+ *               TC instances in used by the servo library start numbering at 0. 
+ * CC_register   Each timer has exacty two Compare/Capture Channels. 
+ *               The corresponding registers on the SAMD architecture are denoted 
+ *               CC0 and CC1. Each CC_register can handle up to 6 servos by multiplexing.
+ * CC_channel    Index of servo within a given timer AND within a given CC_register.
+ *               CC_channel is 0-based, the number runs from 0 to 5 (6 servos per
+ *               CC_register).
+ * servo_index   Unique number for different servos. The total number of servos depends
+ *               on the number of timers available. For a single timer, servo_index runs 
+ *               from 0 to 11. For two timers, servo_index runs from 0 to 23, etc.
+ * 
+ *               Example:
+ *               The servo with the servo index 20 would be handled by:
+ *               - timer == 1 (i.e. the second timer)
+ *               - CC_register == CC1 (i.e. the second CC register of the TC instance) 
+ *               - CC_channel == 2 (i.e. the third pulse on the CC register)
+ */
+ 
 // macro to convert microseconds to ticks
 #define usToTicks(_us)    ((clockCyclesPerMicrosecond() * _us) / (GCLK_PRESCALER))
+
 // macro to convert ticks back to microseconds
 #define ticksToUs(_ticks) (((unsigned) _ticks * (GCLK_PRESCALER)) / clockCyclesPerMicrosecond())
 
+#define FIRST_PULSE_MICROSECONDS_CC0  (400)
+#define FIRST_PULSE_MICROSECONDS_CC1  (800)
+
 // wrap around the counter after this number of tick corresponding PWM
 // frequency of 50 Hz <--> a refresh interval of 20 ms
-#define WRAPAROUND_TICKS  (usToTicks(REFRESH_INTERVAL))
+#define REFRESH_INTERVAL_TICKS  (usToTicks(REFRESH_INTERVAL))
 
 // compensation ticks to trim adjust for digitalWrite delays
 #define TRIM_DURATION  5
+
+// convenience macros
+#define CC_CHANNELS_PER_CC_REGISTER             (SERVOS_PER_TIMER / 2)
+
+// macro to calculate timer which handles servo at given index
+#define SERVO_INDEX_TO_TIMER(_servo_nbr)        ((timer16_Sequence_t)(_servo_nbr / SERVOS_PER_TIMER))
+
+// macro to calculate servo_index from timer, CC_register, and CC_channel
+#define SERVO_INDEX(_timer,_cc_register,_cc_channel)    ( (_timer * (SERVOS_PER_TIMER)) + ((_cc_register) * (CC_CHANNELS_PER_CC_REGISTER)) + (_cc_channel) )
+
+// macro to calculate servo instance (i.e. the object) from timer, CC_register, and CC_channel
+#define SERVO(_timer,_cc_register,_cc_channel) (servos[(SERVO_INDEX(_timer,_cc_register,_cc_channel))])
+
+// macro to check if servo is configured by comparing servo index to global variable ServoCount
+#define SERVO_EXISTS(_timer,_cc_register,_cc_channel) (SERVO_INDEX(_timer,_cc_register,_cc_channel) < ServoCount)
+
+#define SERVO_MIN() (MIN_PULSE_WIDTH - this->min * 4)   // minimum value in uS for this servo
+#define SERVO_MAX() (MAX_PULSE_WIDTH - this->max * 4)   // maximum value in uS for this servo
 
 // static array of servo structures
 static servo_t servos[MAX_SERVOS];
 
 // the total number of attached servos
-uint8_t ServoCount = 0;
+volatile uint8_t ServoCount = 0;
 
-// index for the servo being pulsed for each timer (or -1 if refresh interval)
-static volatile int8_t currentServoIndex[_Nbr_16timers];
+// "phase" for each timer and CC_register
+// indicates which servo to pulse and which value to set the CC register to for 
+// the next interrupt trigger
+static volatile uint8_t phase_index[_Nbr_16timers][_Nbr_CC_registers];
 
-// convenience macros
-#define SERVO_INDEX_TO_TIMER(_servo_nbr) ((timer16_Sequence_t)(_servo_nbr / SERVOS_PER_TIMER))   // returns the timer controlling this servo
-#define SERVO_INDEX_TO_CHANNEL(_servo_nbr) (_servo_nbr % SERVOS_PER_TIMER)                       // returns the index of the servo on this timer
-#define SERVO_INDEX(_timer,_channel)  ((_timer*SERVOS_PER_TIMER) + _channel)                     // macro to access servo index by timer and channel
-#define SERVO(_timer,_channel)  (servos[SERVO_INDEX(_timer,_channel)])                           // macro to access servo class by timer and channel
+static volatile const uint16_t first_pulse_ticks[_Nbr_CC_registers] = {
+    (uint16_t) (usToTicks(FIRST_PULSE_MICROSECONDS_CC0)),
+    (uint16_t) (usToTicks(FIRST_PULSE_MICROSECONDS_CC1)),
+};
 
-#define SERVO_MIN() (MIN_PULSE_WIDTH - this->min * 4)   // minimum value in uS for this servo
-#define SERVO_MAX() (MAX_PULSE_WIDTH - this->max * 4)   // maximum value in uS for this servo
-
-// Referenced in SAMD21 code only, no harm in defining regardless
-#define WAIT_TC16_REGS_SYNC(x) while(x->COUNT16.STATUS.bit.SYNCBUSY);
+// Flags to request a rollover/reset-to-zero of TC COUNT16 register.
+// COUNT16 for a given timer x should be reset when rollover_flag[x][0]
+// and rollover_flag[x][1] are both true.
+static volatile bool rollover_flag[_Nbr_16timers][_Nbr_CC_registers] {
+    #if defined(_useTimer1)
+        false, false, 
+    #endif
+    #if defined (_useTimer2)
+        false, false,
+    #endif
+};
 
 /************ static functions common to all instances ***********************/
 
-void Servo_Handler(timer16_Sequence_t timer, Tc *pTc, uint8_t channel, uint8_t intFlag);
+/* 
+ * Read the COUNT16 register of a TC instance and return it.
+ * Reading the value takes about...
+ *  ... 2-4 microseconds on SAMD21 @ 48 MHz
+ *  ... 0-2 microseconds on SAMD51 @ 120-200 MHz
+ */
+static inline uint16_t __attribute__((always_inline)) getTcCounter16Value(Tc *tc) {
+    #if defined(__SAMD21__)
+        tc->COUNT16.READREQ.reg = TC_READREQ_RREQ |                         // request read...
+                                  TC_READREQ_ADDR(TC_COUNT16_COUNT_OFFSET); // ...of COUNT16 register
+        while(tc->COUNT16.STATUS.bit.SYNCBUSY);                             // wait for sync to complete
+    #elif defined(__SAMD51__)   
+        tc->COUNT16.CTRLBSET.bit.CMD = TC_CTRLBCLR_CMD_READSYNC_Val; // issue read request command COUNT register synchronization to CTRLB register
+        while(tc->COUNT16.SYNCBUSY.bit.CTRLB);                       // wait until CTRLB register is write synchronized
+      //  while(tc->COUNT16.CTRLBSET.bit.CMD);                         // wait until read request command has finished - not necessary?
+    #endif
+    return (uint16_t) tc->COUNT16.COUNT.reg;                     // finally, read out the synchronized value
+}
+
+/* 
+ * Reset the COUNT16 register of a TC instance to 0x00.
+ */
+static inline void __attribute__((always_inline)) resetTcCounter16(Tc *tc) {
+    tc->COUNT16.COUNT.reg = (uint16_t) TC_COUNT16_COUNT_RESETVALUE;
+    #if defined(__SAMD21__)
+        while(tc->COUNT16.STATUS.bit.SYNCBUSY);
+    #elif defined(__SAMD51__)
+        while(tc->COUNT16.SYNCBUSY.bit.COUNT);
+    #endif
+}
+
+/*
+ * Set the a Compare Channel register (CC register) of a TC instance in
+ * 16-bit-mode to the given 16-bit-value.
+ */
+static inline void __attribute__((always_inline)) setCCRegisterValue16(Tc *tc, CC_register_t cc_register, uint16_t new_value) {
+    tc->COUNT16.CC[cc_register].reg = new_value;
+    #if defined(__SAMD21__)
+        while(tc->COUNT16.STATUS.bit.SYNCBUSY);
+    #elif defined(__SAMD51__)
+        if(cc_register == 0) {
+            while(tc->COUNT16.SYNCBUSY.bit.CC0);
+        } else if(cc_register == 1) {
+            while(tc->COUNT16.SYNCBUSY.bit.CC1);
+        }
+    #endif
+}
+
+
+/*
+Variant 1:
+Start of pulse train at COUNT = x > 0 for each CC register
+points 1..5 are handled identically:
+ - set pin of servo in phase i-1 LOW
+ - set next interrupt to happen at COUNT + current servo ticks
+points 0, 6 and 7 are different
+ - in phase 0, there is no pin to set LOW
+ - in phase 6, the next interrupt is set to REFRESH TIME
+ - in pahse 7, the reset of count is trigged and the next interrupt will occurr at x
+ 
+    _______________________________
+    |    |    |    |    |    |    |
+  x | C0 | C1 | C2 | C3 | C4 | C5 |
+|___|____|____|____|____|____|____|__________   COUNT
+*   *    *    *    *    *    *    *      *      
+7   0    1    2    3    4    5    6      7      start of phase o
+
+interrupts occurs at COUNT == *
+COUNT@i==0:  x milliseconds
+COUNT@i==7: 20 milliseconds
+*/
+void handle_interrupt(Tc *pTc, timer16_Sequence_t timer, CC_register_t cc_register) {
+    // set previous servo LOW
+    if (phase_index[timer][cc_register] > 0 && phase_index[timer][cc_register] < (CC_CHANNELS_PER_CC_REGISTER)+1) {
+        // check if previous servo exists
+        // if it does, set pulse LOW, no matter what the current state is
+        if (SERVO_EXISTS(timer, cc_register, phase_index[timer][cc_register]-1)) {
+            digitalWrite(SERVO(timer, cc_register, phase_index[timer][cc_register]-1).Pin.nbr, LOW);
+        }
+    }
+    uint16_t next_interrupt_ticks = 0;
+    if (phase_index[timer][cc_register] < CC_CHANNELS_PER_CC_REGISTER) { // 0..5 with 6 servos per CC register
+        if (SERVO_EXISTS(timer, cc_register, phase_index[timer][cc_register])) {
+            // get a pointer to the current servo
+            servo_t *currrent_servo = &(SERVO(timer, cc_register, phase_index[timer][cc_register]));
+            // pulse servo HIGH, if active
+            if (currrent_servo->Pin.isActive == true) {
+                digitalWrite(currrent_servo->Pin.nbr, HIGH);
+            }
+            // schedule next interrupt
+            next_interrupt_ticks = getTcCounter16Value(pTc) + currrent_servo->ticks;
+            phase_index[timer][cc_register]++;
+        }
+        else { // servo does not exist --> fast forward to end of cycle
+            next_interrupt_ticks = REFRESH_INTERVAL_TICKS;
+            phase_index[timer][cc_register] = (CC_CHANNELS_PER_CC_REGISTER+1);
+        }
+    }
+    // last pulse of pulse train --> don't set any pin HIGH
+    else if (phase_index[timer][cc_register] == (CC_CHANNELS_PER_CC_REGISTER)) {
+        next_interrupt_ticks = REFRESH_INTERVAL_TICKS;
+        phase_index[timer][cc_register] = (CC_CHANNELS_PER_CC_REGISTER)+1;
+    }
+    // end of cycle --> trigger reset of COUNT, schedule next interrupt at start of cycle
+    else if (phase_index[timer][cc_register] == (CC_CHANNELS_PER_CC_REGISTER)+1) {
+        next_interrupt_ticks = first_pulse_ticks[cc_register];
+        phase_index[timer][cc_register] = 0;
+        rollover_flag[timer][cc_register] = true;
+    }
+    // update value in compare/capture register for next match interrupt
+    setCCRegisterValue16(pTc, cc_register, next_interrupt_ticks);
+}
+
+static inline void __attribute__((always_inline)) dispatch_interrupt(Tc *pTc, timer16_Sequence_t timer) {
+    // Note: To clear the interrupt flag, we have to write a *1* to 
+    // the corresponding bit in the INTFLAG register, not a *0*.
+    
+    // Store bitpattern for INTFLAGs in a local variable. For some reason,
+    // *all* INTFLAGs appear to be reset when setting new values to CCx.
+    // MC0 appears to be reset when reading from/writing to CC1 and vice versa.
+    // Solution: store INTFLAGs at the beginning of ISR, analyze later.
+    uint8_t intflags = pTc->COUNT16.INTFLAG.reg;
+    if (intflags & TC_INTFLAG_MC0) {        // we have a match/capture interrupt on CC0
+        handle_interrupt(pTc, timer, _cc0); // handle the interrupt
+        pTc->COUNT16.INTFLAG.bit.MC0 = 1;   // reset match/capture interrupt flag of CC0
+    }
+    if (intflags & TC_INTFLAG_MC1) {        // we have a match/capture interrupt on CC1
+        handle_interrupt(pTc, timer, _cc1); // handle the interrupt
+        pTc->COUNT16.INTFLAG.bit.MC1 = 1;   // reset match/capture interrupt flag of CC1
+    }
+    if (rollover_flag[timer][_cc0] && rollover_flag[timer][_cc1]) {
+        resetTcCounter16(pTc);
+        rollover_flag[timer][_cc0] = false;
+        rollover_flag[timer][_cc1] = false;
+    }
+}
+
 #if defined (_useTimer1)
-void HANDLER_FOR_TIMER1(void) {
-    Servo_Handler(_timer1, TC_FOR_TIMER1, CHANNEL_FOR_TIMER1, INTFLAG_BIT_FOR_TIMER_1);
+void TIMER1_HANDLER(void) {
+    dispatch_interrupt(TIMER1_TC, _timer1);
 }
 #endif
 #if defined (_useTimer2)
-void HANDLER_FOR_TIMER2(void) {
-    Servo_Handler(_timer2, TC_FOR_TIMER2, CHANNEL_FOR_TIMER2, INTFLAG_BIT_FOR_TIMER_2);
+void TIMER2_HANDLER(void) {
+    dispatch_interrupt(TIMER2_TC, _timer2);
 }
 #endif
 
-void Servo_Handler(timer16_Sequence_t timer, Tc *tc, uint8_t channel, uint8_t intFlag)
-{
-    if (currentServoIndex[timer] < 0) {
-        tc->COUNT16.COUNT.reg = (uint16_t) 0;
-#if defined(__SAMD21__)
-        WAIT_TC16_REGS_SYNC(tc)
-#elif defined(__SAMD51__)
-        while(tc->COUNT16.SYNCBUSY.bit.COUNT);
-#endif
-    } else {
-        if (SERVO_INDEX(timer, currentServoIndex[timer]) < ServoCount && SERVO(timer, currentServoIndex[timer]).Pin.isActive == true) {
-            digitalWrite(SERVO(timer, currentServoIndex[timer]).Pin.nbr, LOW);   // pulse this channel low if activated
-        }
-    }
-
-    // Select the next servo controlled by this timer
-    currentServoIndex[timer]++;
-
-    if (SERVO_INDEX(timer, currentServoIndex[timer]) < ServoCount && currentServoIndex[timer] < SERVOS_PER_TIMER) {
-        if (SERVO(timer, currentServoIndex[timer]).Pin.isActive == true) {   // check if activated
-            digitalWrite(SERVO(timer, currentServoIndex[timer]).Pin.nbr, HIGH);   // it's an active channel so pulse it high
-        }
-
-        // Get the counter value
-#if defined(__SAMD51__)
-        // Note from datasheet: Prior to any read access, this register must be synchronized by user by writing the according TC
-        // Command value to the Control B Set register (CTRLBSET.CMD=READSYNC)
-        while (tc->COUNT16.SYNCBUSY.bit.CTRLB);
-        tc->COUNT16.CTRLBSET.bit.CMD = TC_CTRLBSET_CMD_READSYNC_Val;
-        while (tc->COUNT16.SYNCBUSY.bit.CTRLB);
-#endif
-        uint16_t tcCounterValue = tc->COUNT16.COUNT.reg;
-#if defined(__SAMD21__)
-        WAIT_TC16_REGS_SYNC(tc)
-#elif defined(__SAMD51__)
-        while(tc->COUNT16.SYNCBUSY.bit.COUNT);
-#endif
-
-        tc->COUNT16.CC[channel].reg = (uint16_t) (tcCounterValue + SERVO(timer, currentServoIndex[timer]).ticks);
-#if defined(__SAMD21__)
-        WAIT_TC16_REGS_SYNC(tc)
-#elif defined(__SAMD51__)
-        if(channel == 0) {
-            while(tc->COUNT16.SYNCBUSY.bit.CC0);
-        } else if(channel == 1) {
-            while(tc->COUNT16.SYNCBUSY.bit.CC1);
-        }
-#endif
-    }
-    else {
-        // finished all channels so wait for the refresh period to expire before starting over
-
-        // Get the counter value
-        uint16_t tcCounterValue = tc->COUNT16.COUNT.reg;
-#if defined(__SAMD21__)
-        WAIT_TC16_REGS_SYNC(tc)
-#elif defined(__SAMD51__)
-        while(tc->COUNT16.SYNCBUSY.bit.COUNT);
-#endif
-
-        if (tcCounterValue + 4UL < usToTicks(REFRESH_INTERVAL)) {   // allow a few ticks to ensure the next OCR1A not missed
-            tc->COUNT16.CC[channel].reg = (uint16_t) usToTicks(REFRESH_INTERVAL);
-        }
-        else {
-            tc->COUNT16.CC[channel].reg = (uint16_t) (tcCounterValue + 4UL);   // at least REFRESH_INTERVAL has elapsed
-        }
-#if defined(__SAMD21__)
-        WAIT_TC16_REGS_SYNC(tc)
-#elif defined(__SAMD51__)
-        if(channel == 0) {
-            while(tc->COUNT16.SYNCBUSY.bit.CC0);
-        } else if(channel == 1) {
-            while(tc->COUNT16.SYNCBUSY.bit.CC1);
-        }
-#endif
-
-        currentServoIndex[timer] = -1;   // this will get incremented at the end of the refresh period to start again at the first channel
-    }
-
-    // Clear the interrupt
-    tc->COUNT16.INTFLAG.reg = intFlag;
-}
-
-static inline void resetTC (Tc* TCx)
-{
+static inline void resetTC (Tc* TCx) {
     // Disable TCx
     TCx->COUNT16.CTRLA.reg &= ~TC_CTRLA_ENABLE;
-#if defined(__SAMD21__)
-    WAIT_TC16_REGS_SYNC(TCx)
-#elif defined(__SAMD51__)
-    while(TCx->COUNT16.SYNCBUSY.bit.ENABLE);
-#endif
-
+    #if defined(__SAMD21__)
+        while(TCx->COUNT16.STATUS.bit.SYNCBUSY)
+    #elif defined(__SAMD51__)
+        while(TCx->COUNT16.SYNCBUSY.bit.ENABLE);
+    #endif
     // Reset TCx
     TCx->COUNT16.CTRLA.reg = TC_CTRLA_SWRST;
-#if defined(__SAMD21__)
-    WAIT_TC16_REGS_SYNC(TCx)
-#elif defined(__SAMD51__)
-    while(TCx->COUNT16.SYNCBUSY.bit.SWRST);
-#endif
+    #if defined(__SAMD21__)
+        while(TCx->COUNT16.STATUS.bit.SYNCBUSY)
+    #elif defined(__SAMD51__)
+        while(TCx->COUNT16.SYNCBUSY.bit.SWRST);
+    #endif
     while (TCx->COUNT16.CTRLA.bit.SWRST);
 }
 
-static void _initISR(Tc *tc, uint8_t channel, uint32_t id, IRQn_Type irqn, uint8_t gcmForTimer, uint8_t intEnableBit)
-{
-    (void)id;
+static void _initISR(Tc *tc, IRQn_Type irqn, uint8_t gcmForTimer, timer16_Sequence_t timer) {
     // Select GCLK0 as timer/counter input clock source
-#if defined(__SAMD21__)
-    GCLK->CLKCTRL.reg = (uint16_t) (GCLK_CLKCTRL_CLKEN | GCLK_CLKCTRL_GEN_GCLK0 | GCLK_CLKCTRL_ID(gcmForTimer));
-    while (GCLK->STATUS.bit.SYNCBUSY);
-#elif defined(__SAMD51__)
-    int idx = gcmForTimer;           // see datasheet Table 14-9
-    GCLK->PCHCTRL[idx].bit.GEN  = 0; // Select GCLK0 as periph clock source
-    GCLK->PCHCTRL[idx].bit.CHEN = 1; // Enable peripheral
-    while(!GCLK->PCHCTRL[idx].bit.CHEN);
-#endif
-
-    // Reset the timer
-    // TODO this is not the right thing to do if more than one channel per timer is used by the Servo library
+    #if defined(__SAMD21__)
+        GCLK->CLKCTRL.reg = (uint16_t) (GCLK_CLKCTRL_CLKEN | GCLK_CLKCTRL_GEN_GCLK0 | GCLK_CLKCTRL_ID(gcmForTimer));
+        while (GCLK->STATUS.bit.SYNCBUSY);
+    #elif defined(__SAMD51__)
+        int idx = gcmForTimer;           // see datasheet Table 14-9
+        GCLK->PCHCTRL[idx].bit.GEN  = 0; // Select GCLK0 as periph clock source
+        GCLK->PCHCTRL[idx].bit.CHEN = 1; // Enable peripheral
+        while(!GCLK->PCHCTRL[idx].bit.CHEN);
+    #endif
+    // Reset the timer to default settings
     resetTC(tc);
-
     // Set timer counter mode to 16 bits
     tc->COUNT16.CTRLA.reg |= TC_CTRLA_MODE_COUNT16;
-
-#if defined(__SAMD21__) // for SAMD21
-    // Set timer counter mode as normal PWM
-    tc->COUNT16.CTRLA.reg |= TC_CTRLA_WAVEGEN_NPWM;
-    // Set the prescaler factor to GCLK_TC/16.  At nominal 48MHz GCLK_TC this is 3000 ticks per millisecond
-    tc->COUNT16.CTRLA.reg |= (uint16_t) TC_CTRLA_PRESCALER_USED;
-#elif defined(__SAMD51__)
-    // Set timer counter mode as normal PWM
-    tc->COUNT16.WAVE.bit.WAVEGEN = TCC_WAVE_WAVEGEN_NPWM_Val;
-    // Set the prescaler factor to 64 or 128 depending on FCPU
-    // (avoid overflowing 16-bit clock counter)
- #if(F_CPU > 200000000)
-    tc->COUNT16.CTRLA.bit.PRESCALER = TCC_CTRLA_PRESCALER_DIV128_Val;
- #else
-    // At 120-200 MHz GCLK this is 1875-3125 ticks per millisecond
-    tc->COUNT16.CTRLA.bit.PRESCALER = TCC_CTRLA_PRESCALER_DIV64_Val;
- #endif
-#endif
-
-    // Count up
+    #if defined(__SAMD21__)
+        // Set timer compare mode as normal frequency.
+        tc->COUNT16.CTRLA.bit.WAVEGEN = TC_CTRLA_WAVEGEN_NFRQ_Val; 
+        // Set the prescaler factor. At nominal 48 MHz GCLK_TC this is 3000 ticks per millisecond.
+        tc->COUNT16.CTRLA.reg |= (uint16_t) TC_CTRLA_PRESCALER_USED;
+    #elif defined(__SAMD51__)
+        // Set timer compare mode as normal frequency.
+        tc->COUNT16.WAVE.bit.WAVEGEN = TC_WAVE_WAVEGEN_NFRQ_Val;
+        // set the prescaler factor. At nominal 120 MHz GLCK_TC this is 1875 ticks per millisecond.
+        tc->COUNT16.CTRLA.reg |= (uint32_t) TC_CTRLA_PRESCALER_USED;
+    #endif
+    // set direction to "counting upwards" by clearing the "count downwards" bit
     tc->COUNT16.CTRLBCLR.bit.DIR = 1;
-#if defined(__SAMD21__)
-    WAIT_TC16_REGS_SYNC(tc)
-#elif defined(__SAMD51__)
-    while(tc->COUNT16.SYNCBUSY.bit.CTRLB);
-#endif
-
-    // First interrupt request after 1 ms
-    tc->COUNT16.CC[channel].reg = (uint16_t) usToTicks(1000UL);
-#if defined(__SAMD21__)
-    WAIT_TC16_REGS_SYNC(tc)
-#elif defined(__SAMD51__)
-    if(channel == 0) {
-        while(tc->COUNT16.SYNCBUSY.bit.CC0);
-    } else if(channel == 1) {
-        while(tc->COUNT16.SYNCBUSY.bit.CC1);
-    }
-#endif
-
-    // Configure interrupt request
-    // TODO this should be changed if more than one channel per timer is used by the Servo library
+    #if defined(__SAMD21__)
+        while(tc->COUNT16.STATUS.bit.SYNCBUSY)
+    #elif defined(__SAMD51__)
+        while(tc->COUNT16.SYNCBUSY.bit.CTRLB);
+    #endif
+    // configure very first compare values for CC0 and CC1
+    setCCRegisterValue16(tc, _cc0, first_pulse_ticks[_cc0]);
+    setCCRegisterValue16(tc, _cc1, first_pulse_ticks[_cc1]);
+    // configure interrupt requests
     NVIC_DisableIRQ(irqn);
     NVIC_ClearPendingIRQ(irqn);
     NVIC_SetPriority(irqn, 0);
     NVIC_EnableIRQ(irqn);
-
-    // Enable the match channel interrupt request
-    tc->COUNT16.INTENSET.reg = intEnableBit;
-
-    // Enable the timer and start it
+    // enable the match channel interrupt request for both CC registers
+    tc->COUNT16.INTENSET.reg = (TC_INTENSET_MC0 | TC_INTENSET_MC1);
+    // (re)set phases for this timer
+    phase_index[timer][_cc0] = 0;
+    phase_index[timer][_cc1] = 0;
+    // (re)set overflow flags for this timer
+    rollover_flag[timer][_cc0] = false;
+    rollover_flag[timer][_cc1] = false;
+    // enable the timer and start it
     tc->COUNT16.CTRLA.reg |= TC_CTRLA_ENABLE;
-#if defined(__SAMD21__)
-    WAIT_TC16_REGS_SYNC(tc)
-#elif defined(__SAMD51__)
-    while(tc->COUNT16.SYNCBUSY.bit.ENABLE);
-#endif
+    #if defined(__SAMD21__)
+        while(tc->COUNT16.STATUS.bit.SYNCBUSY);
+    #elif defined(__SAMD51__)
+        while(tc->COUNT16.SYNCBUSY.bit.ENABLE);
+    #endif
 }
 
-static void initISR(timer16_Sequence_t timer)
-{
-#if defined (_useTimer1)
-    if (timer == _timer1)
-        _initISR(TC_FOR_TIMER1, CHANNEL_FOR_TIMER1, ID_TC_FOR_TIMER1, IRQn_FOR_TIMER1, GCM_FOR_TIMER_1, INTENSET_BIT_FOR_TIMER_1);
-#endif
-#if defined (_useTimer2)
-    if (timer == _timer2)
-        _initISR(TC_FOR_TIMER2, CHANNEL_FOR_TIMER2, ID_TC_FOR_TIMER2, IRQn_FOR_TIMER2, GCM_FOR_TIMER_2, INTENSET_BIT_FOR_TIMER_2);
-#endif
+static void initISR(timer16_Sequence_t timer) {
+    #if defined (_useTimer1)
+        if (timer == _timer1) {
+            _initISR(TIMER1_TC, TIMER1_IRQn, TIMER1_GCLK_ID, _timer1);
+        }
+    #endif
+    #if defined (_useTimer2)
+        if (timer == _timer2) {
+            _initISR(TIMER2_TC, TIMER2_IRQn, TIMER2_GCLK_ID, _timer2);
+        }
+    #endif
 }
 
-static void finISR(timer16_Sequence_t timer)
-{
-  (void)timer;
-#if defined (_useTimer1)
-    // Disable the match channel interrupt request
-    TC_FOR_TIMER1->COUNT16.INTENCLR.reg = INTENCLR_BIT_FOR_TIMER_1;
-#endif
-#if defined (_useTimer2)
-    // Disable the match channel interrupt request
-    TC_FOR_TIMER2->COUNT16.INTENCLR.reg = INTENCLR_BIT_FOR_TIMER_2;
-#endif
+static void finISR(timer16_Sequence_t timer) {
+    // Disable timer by disabling the the match interrupt requests for both CC registers.
+    // The timer is still running, but does not bother the CPU anymore.
+    (void)timer;
+    #if defined (_useTimer1)
+        if (timer == _timer1) {
+            TIMER1_TC->COUNT16.INTENCLR.reg = TC_INTENCLR_MC0 | TC_INTENCLR_MC1;
+        }
+    #endif
+    #if defined (_useTimer2)
+        if (timer == _timer1) {
+            TIMER2_TC->COUNT16.INTENCLR.reg = TC_INTENCLR_MC0 | TC_INTENCLR_MC1;
+        }
+    #endif
 }
 
-static boolean isTimerActive(timer16_Sequence_t timer)
-{
-  // returns true if any servo is active on this timer
-  for(uint8_t channel=0; channel < SERVOS_PER_TIMER; channel++) {
-    if(SERVO(timer,channel).Pin.isActive == true)
-      return true;
-  }
-  return false;
+static boolean isTimerActive(timer16_Sequence_t timer) {
+    // returns true if any servo is active on this timer
+    // loop over all registers (0..1)
+    for (uint8_t cc_register=0; cc_register < _Nbr_CC_registers; cc_register++) {
+        // loop over all channels on this register (0..5)
+        for (uint8_t channel=0; channel < CC_CHANNELS_PER_CC_REGISTER; channel++) {
+            if ((SERVO(timer, cc_register, channel)).Pin.isActive == true) {
+                return true;
+            }
+        }
+    }
+    return false;
 }
 
 /****************** end of static functions ******************************/
