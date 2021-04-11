@@ -22,8 +22,13 @@
 #include <Servo.h>
 
 
-// use different prescalers depending on F_CPU (avoid overflowing 16-bit counter)
-// Note: There are no prescalers of size 32 or 128 for TC instances!
+/* 
+ * Use different prescalers depending on F_CPU (avoid overflowing 16-bit counter).
+ * Make it general, so the library also works when over- or underclocking the
+ * CPU.
+ * 
+ * Note: There are no prescalers of size 32 or 128 for TC instances!
+ */
 #if(F_CPU >  197000000) // between 197 MHz and ~7.7 GHz (more than any SAMD MCU can do)
     #define GCLK_PRESCALER (256)
     #define TC_CTRLA_PRESCALER_USED TC_CTRLA_PRESCALER_DIV256
@@ -56,7 +61,7 @@
  *               TC instances in used by the servo library start numbering at 0. 
  * CC_register   Each timer has exacty two Compare/Capture Channels. 
  *               The corresponding registers on the SAMD architecture are denoted 
- *               CC0 and CC1. Each CC_register can handle up to 6 servos by multiplexing.
+ *               CC0 and CC1. Each CCx register can handle up to 6 servos by multiplexing.
  * CC_channel    Index of servo within a given timer AND within a given CC_register.
  *               CC_channel is 0-based, the number runs from 0 to 5 (6 servos per
  *               CC_register).
@@ -76,9 +81,6 @@
 
 // macro to convert ticks back to microseconds
 #define ticksToUs(_ticks) (((unsigned) _ticks * (GCLK_PRESCALER)) / clockCyclesPerMicrosecond())
-
-#define FIRST_PULSE_MICROSECONDS_CC0  (400)
-#define FIRST_PULSE_MICROSECONDS_CC1  (800)
 
 // wrap around the counter after this number of tick corresponding PWM
 // frequency of 50 Hz <--> a refresh interval of 20 ms
@@ -108,7 +110,7 @@
 // static array of servo structures
 static servo_t servos[MAX_SERVOS];
 
-// the total number of attached servos
+// the total number of configured servos
 volatile uint8_t ServoCount = 0;
 
 // "phase" for each timer and CC_register
@@ -116,14 +118,16 @@ volatile uint8_t ServoCount = 0;
 // the next interrupt trigger
 static volatile uint8_t phase_index[_Nbr_16timers][_Nbr_CC_registers];
 
+
+// timings for the very first pulse in a pulse train
 static volatile const uint16_t first_pulse_ticks[_Nbr_CC_registers] = {
-    (uint16_t) (usToTicks(FIRST_PULSE_MICROSECONDS_CC0)),
-    (uint16_t) (usToTicks(FIRST_PULSE_MICROSECONDS_CC1)),
+    (uint16_t) (usToTicks(400)),
+    (uint16_t) (usToTicks(800)),
 };
 
 // Flags to request a rollover/reset-to-zero of TC COUNT16 register.
-// COUNT16 for a given timer x should be reset when rollover_flag[x][0]
-// and rollover_flag[x][1] are both true.
+// COUNT16 for a given timer x should be reset when rollover_flag[x][_cc0]
+// and rollover_flag[x][_cc1] are both true.
 static volatile bool rollover_flag[_Nbr_16timers][_Nbr_CC_registers] {
     #if defined(_useTimer1)
         false, false, 
@@ -185,22 +189,22 @@ static inline void __attribute__((always_inline)) setCCRegisterValue16(Tc *tc, C
 
 
 /*
-Variant 1:
-Start of pulse train at COUNT = x > 0 for each CC register
-points 1..5 are handled identically:
- - set pin of servo in phase i-1 LOW
- - set next interrupt to happen at COUNT + current servo ticks
-points 0, 6 and 7 are different
- - in phase 0, there is no pin to set LOW
- - in phase 6, the next interrupt is set to REFRESH TIME
- - in pahse 7, the reset of count is trigged and the next interrupt will occurr at x
+Variant 1 of handle_interrupt() function:
+- Start of pulse train at COUNT = x > 0 for each CC register
+- points 1..5 are handled identically:
+  - set pin of servo in phase i-1 LOW
+  - set next interrupt to happen at COUNT + current servo ticks
+- points 0, 6 and 7 are different
+  - in phase 0, there is no pin to set LOW
+  - in phase 6, the next interrupt is set to REFRESH TIME
+  - in pahse 7, the reset of count is trigged and the next interrupt will occurr at x
  
     _______________________________
     |    |    |    |    |    |    |
   x | C0 | C1 | C2 | C3 | C4 | C5 |
-|___|____|____|____|____|____|____|__________   COUNT
+|___|____|____|____|____|____|____|__________  
 *   *    *    *    *    *    *    *      *      
-7   0    1    2    3    4    5    6      7      start of phase o
+7   0    1    2    3    4    5    6      7      start of phase i
 
 interrupts occurs at COUNT == *
 COUNT@i==0:  x milliseconds
@@ -248,14 +252,23 @@ void handle_interrupt(Tc *pTc, timer16_Sequence_t timer, CC_register_t cc_regist
     setCCRegisterValue16(pTc, cc_register, next_interrupt_ticks);
 }
 
+/*
+ * On SAMD architecture, all interrupts generated from a single peripheral
+ * are ORed together. This means, that the ISR has to figure out by itself, 
+ * which type of interrupt(s) was/were actually triggered.
+ * This function does the "figuring out" and calls the final handler 
+ * function handle_interrupt() with the proper parameters.
+ */
 static inline void __attribute__((always_inline)) dispatch_interrupt(Tc *pTc, timer16_Sequence_t timer) {
     // Note: To clear the interrupt flag, we have to write a *1* to 
     // the corresponding bit in the INTFLAG register, not a *0*.
     
+    // Note:
     // Store bitpattern for INTFLAGs in a local variable. For some reason,
     // *all* INTFLAGs appear to be reset when setting new values to CCx.
     // MC0 appears to be reset when reading from/writing to CC1 and vice versa.
-    // Solution: store INTFLAGs at the beginning of ISR, analyze later.
+    // This is not documented in the data sheet.
+    // Solution: Store INTFLAGs at the beginning of ISR, analyze later.
     uint8_t intflags = pTc->COUNT16.INTFLAG.reg;
     if (intflags & TC_INTFLAG_MC0) {        // we have a match/capture interrupt on CC0
         handle_interrupt(pTc, timer, _cc0); // handle the interrupt
@@ -265,6 +278,7 @@ static inline void __attribute__((always_inline)) dispatch_interrupt(Tc *pTc, ti
         handle_interrupt(pTc, timer, _cc1); // handle the interrupt
         pTc->COUNT16.INTFLAG.bit.MC1 = 1;   // reset match/capture interrupt flag of CC1
     }
+    // if handle_interrupt signals rollover for *both* CC registers, reset COUNT
     if (rollover_flag[timer][_cc0] && rollover_flag[timer][_cc1]) {
         resetTcCounter16(pTc);
         rollover_flag[timer][_cc0] = false;

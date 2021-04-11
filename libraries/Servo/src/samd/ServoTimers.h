@@ -33,6 +33,11 @@
  * ---------------------
  */
 
+/*
+ * Make sure that macros __SAMD21__ and __SAMD51__ are defined.
+ * Use CMSIS definitions to figure out on which processor we run.
+ */
+
 // processor list taken from here: 
 // https://github.com/arduino/ArduinoModule-CMSIS-Atmel/blob/master/CMSIS-Atmel/CMSIS/Device/ATMEL/samd21/include/samd21.h
 #if defined(__SAMD21E16A__)  || defined(__ATSAMD21E16A__)  \
@@ -56,20 +61,36 @@
   #endif
 #endif
 
+// processor list taken from here: 
+// https://github.com/arduino/ArduinoModule-CMSIS-Atmel/blob/master/CMSIS-Atmel/CMSIS/Device/ATMEL/samd21/include/samd21.h
+#if defined(__SAMD51G18A__) || defined(__ATSAMD51G18A__)
+||  defined(__SAMD51G19A__) || defined(__ATSAMD51G19A__)
+||  defined(__SAMD51J18A__) || defined(__ATSAMD51J18A__)
+||  defined(__SAMD51J19A__) || defined(__ATSAMD51J19A__)
+||  defined(__SAMD51J20A__) || defined(__ATSAMD51J20A__)
+||  defined(__SAMD51N19A__) || defined(__ATSAMD51N19A__)
+||  defined(__SAMD51N20A__) || defined(__ATSAMD51N20A__)
+||  defined(__SAMD51P19A__) || defined(__ATSAMD51P19A__)
+||  defined(__SAMD51P20A__) || defined(__ATSAMD51P20A__)
+  #if !defined(__SAMD51__)
+    #define __SAMD51__
+  #endif#endif
+
 /*
+ * Use different TC instances for SAMD21 and SAMD51.
+ * 
  * Note:
  * 
- * TC4 and TC5 use the same peripheral clock. If we configure the clock
- * for one of these, we WILL configure the clock for the other. This means
+ * TC4 and TC5 use the same peripheral clock. This is true for both SAMD21
+ * and SAMD 51. If we configure the clock for one of these TC instance,
+ * we WILL also configure the clock for the other. This means
  * that stuff on *both* TC instances will probably break when using this
  * library (most notably PWM with analogWrite(), no matter if we actually 
  * use both TC instances or only one.
  */
 
-// For SAMD:
 #define _useTimer1
-#define _useTimer2   // <- TODO do not activate until the code in Servo.cpp has been changed in order
-                       //         to manage more than one channel per timer on the SAMD architecture
+#define _useTimer2
 
 #if defined(__SAMD21__)
     #if defined (_useTimer1)
