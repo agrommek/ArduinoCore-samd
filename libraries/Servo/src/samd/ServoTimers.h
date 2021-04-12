@@ -43,7 +43,7 @@
 // This list contains most of the SAMD21 processors.
 // Not included are the B, C, L, and D device variants listed in the data sheet.
 #if !defined(__SAMD21__)
-  #if defined(__SAMD21E15A__)  || defined(__ATSAMD21E15A__)
+  #if defined(__SAMD21E15A__)  || defined(__ATSAMD21E15A__)  \
   ||  defined(__SAMD21E16A__)  || defined(__ATSAMD21E16A__)  \
   ||  defined(__SAMD21E17A__)  || defined(__ATSAMD21E17A__)  \
   ||  defined(__SAMD21E18A__)  || defined(__ATSAMD21E18A__)  \
@@ -76,7 +76,7 @@
   ||  defined(__SAMD51N19A__) || defined(__ATSAMD51N19A__) \
   ||  defined(__SAMD51N20A__) || defined(__ATSAMD51N20A__) \
   ||  defined(__SAMD51P19A__) || defined(__ATSAMD51P19A__) \
-  ||  defined(__SAMD51P20A__) || defined(__ATSAMD51P20A__) \
+  ||  defined(__SAMD51P20A__) || defined(__ATSAMD51P20A__)
     #define __SAMD51__
   #endif
 #endif

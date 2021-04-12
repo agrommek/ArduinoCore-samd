@@ -188,15 +188,20 @@ static inline void __attribute__((always_inline)) setCCRegisterValue16(Tc *tc, C
 }
 
 
+#define _use_Servo_variant_2
+#if defined(_use_Servo_variant_1)
 /*
-Variant 1 of handle_interrupt() function:
+Variant 1 of handle_interrupt() function. Features:
+
 - Start of pulse train at COUNT = x > 0 for each CC register
+- eight interrupts for six pulses per cycle
+
 - points 1..5 are handled identically:
   - set pin of servo in phase i-1 LOW
   - set next interrupt to happen at COUNT + current servo ticks
 - points 0, 6 and 7 are different
   - in phase 0, there is no pin to set LOW
-  - in phase 6, the next interrupt is set to REFRESH TIME
+  - in phase 6, the next interrupt is set to REFRESH_INTERVAL TIME
   - in pahse 7, the reset of count is trigged and the next interrupt will occurr at x
  
     _______________________________
@@ -223,13 +228,13 @@ void handle_interrupt(Tc *pTc, timer16_Sequence_t timer, CC_register_t cc_regist
     if (phase_index[timer][cc_register] < CC_CHANNELS_PER_CC_REGISTER) { // 0..5 with 6 servos per CC register
         if (SERVO_EXISTS(timer, cc_register, phase_index[timer][cc_register])) {
             // get a pointer to the current servo
-            servo_t *currrent_servo = &(SERVO(timer, cc_register, phase_index[timer][cc_register]));
+            servo_t *current_servo = &(SERVO(timer, cc_register, phase_index[timer][cc_register]));
             // pulse servo HIGH, if active
-            if (currrent_servo->Pin.isActive == true) {
-                digitalWrite(currrent_servo->Pin.nbr, HIGH);
+            if (current_servo->Pin.isActive == true) {
+                digitalWrite(current_servo->Pin.nbr, HIGH);
             }
             // schedule next interrupt
-            next_interrupt_ticks = getTcCounter16Value(pTc) + currrent_servo->ticks;
+            next_interrupt_ticks = getTcCounter16Value(pTc) + current_servo->ticks;
             phase_index[timer][cc_register]++;
         }
         else { // servo does not exist --> fast forward to end of cycle
@@ -251,6 +256,80 @@ void handle_interrupt(Tc *pTc, timer16_Sequence_t timer, CC_register_t cc_regist
     // update value in compare/capture register for next match interrupt
     setCCRegisterValue16(pTc, cc_register, next_interrupt_ticks);
 }
+#elif defined(_use_Servo_variant_2)
+/*
+Variant 2 of handle_interrupt() function. Features:
+- Start of pulse train at COUNT == 0 for each CC register
+- seven interrupts for six pulses per cycle
+- points 1..5 are handled identically:
+  -- set pin of servo in phase i-1 LOW
+  -- the next interrupt is set to happen at COUNT + current servo ticks
+- points 0 and 6 are different
+  - at point 0:
+   -- there is no pin to set LOW
+   -- rollover of COUNT is triggered
+   -- next interrupt is set to happen at COUNT == current servo ticks
+  - at point 6:
+   -- there is no pin to set HIGH
+   -- the next interrupt is set to happen at REFRESH_INTERVAL (i.e. at 20 ms)
+ 
+_______________________________
+|    |    |    |    |    |    |
+| C0 | C1 | C2 | C3 | C4 | C5 |
+|____|____|____|____|____|____|__________  
+*    *    *    *    *    *    *      *      
+0    1    2    3    4    5    6      7      start of phase i
+
+interrupts occurs at COUNT == *
+COUNT@i==0:  0 milliseconds
+COUNT@i==6: 20 milliseconds
+*/
+void handle_interrupt(Tc *pTc, timer16_Sequence_t timer, CC_register_t cc_register) {
+    // set previous servo LOW
+    if (phase_index[timer][cc_register] > 0) {
+        // check if previous servo exists
+        // if it does, set pulse LOW, no matter what the current state is
+        if (SERVO_EXISTS(timer, cc_register, phase_index[timer][cc_register]-1)) {
+            digitalWrite(SERVO(timer, cc_register, phase_index[timer][cc_register]-1).Pin.nbr, LOW);
+        }
+    }
+    uint16_t next_interrupt_ticks = 0;
+    if (SERVO_EXISTS(timer, cc_register, phase_index[timer][cc_register])) {
+        // get a pointer to the current servo
+        servo_t *current_servo = &(SERVO(timer, cc_register, phase_index[timer][cc_register]));
+        // handle phase 0
+        if (phase_index[timer][cc_register] == 0) {
+            if (current_servo->Pin.isActive == true) {      // if current servo is active...
+                digitalWrite(current_servo->Pin.nbr, HIGH); // ...set pin HIGH
+            }
+            rollover_flag[timer][cc_register] = true;       // trigger rollover of counter
+            next_interrupt_ticks = current_servo->ticks;    // set next interrupt to end of first pulse
+            phase_index[timer][cc_register]++;              // increment phase
+        }
+        // handle phases 1..5
+        else if (phase_index[timer][cc_register] < CC_CHANNELS_PER_CC_REGISTER) {
+            if (current_servo->Pin.isActive == true) {      // if current servo is active...
+                digitalWrite(current_servo->Pin.nbr, HIGH); // ...set pin HIGH
+            }
+            // set next interrupt to current counter value + length of current pulse
+            next_interrupt_ticks = getTcCounter16Value(pTc) + current_servo->ticks;
+            phase_index[timer][cc_register]++;              // increment phase
+        }
+        // handle phase 6
+        else if (phase_index[timer][cc_register] == CC_CHANNELS_PER_CC_REGISTER) {
+            next_interrupt_ticks = REFRESH_INTERVAL_TICKS;  // set next interrupt to end of refresh cycle (20 ms)
+            phase_index[timer][cc_register] = 0;            // wrap around phase to 0
+        }
+    }
+    else { // servo does not exist --> fast forward to phase 0 again
+        next_interrupt_ticks = REFRESH_INTERVAL_TICKS;      // set next interrupt to end of refresh cycle (20 ms)
+        phase_index[timer][cc_register] = 0;                // wrap around phase to 0
+    }
+    // update value in compare/capture register for next match interrupt
+    setCCRegisterValue16(pTc, cc_register, next_interrupt_ticks);
+}
+#endif
+
 
 /*
  * On SAMD architecture, all interrupts generated from a single peripheral
