@@ -153,7 +153,6 @@ static inline uint16_t __attribute__((always_inline)) getTcCounter16Value(Tc *tc
     #elif defined(__SAMD51__)   
         tc->COUNT16.CTRLBSET.bit.CMD = TC_CTRLBCLR_CMD_READSYNC_Val; // issue read request command COUNT register synchronization to CTRLB register
         while(tc->COUNT16.SYNCBUSY.bit.CTRLB);                       // wait until CTRLB register is write synchronized
-      //  while(tc->COUNT16.CTRLBSET.bit.CMD);                         // wait until read request command has finished - not necessary?
     #endif
     return (uint16_t) tc->COUNT16.COUNT.reg;                     // finally, read out the synchronized value
 }
@@ -200,20 +199,21 @@ Variant 1 of handle_interrupt() function. Features:
   - set pin of servo in phase i-1 LOW
   - set next interrupt to happen at COUNT + current servo ticks
 - points 0, 6 and 7 are different
-  - in phase 0, there is no pin to set LOW
-  - in phase 6, the next interrupt is set to REFRESH_INTERVAL TIME
-  - in pahse 7, the reset of count is trigged and the next interrupt will occurr at x
+  - at point 0, there is no pin to set LOW
+  - at point 6, the next interrupt is set to happen at REFRESH_INTERVAL
+  - at point 7, the reset of count is trigged and the next interrupt
+    is set to happen at time x
  
     _______________________________
     |    |    |    |    |    |    |
   x | C0 | C1 | C2 | C3 | C4 | C5 |
 |___|____|____|____|____|____|____|__________  
 *   *    *    *    *    *    *    *      *      
-7   0    1    2    3    4    5    6      7      start of phase i
+7   0    1    2    3    4    5    6      7      point i
 
-interrupts occurs at COUNT == *
-COUNT@i==0:  x milliseconds
-COUNT@i==7: 20 milliseconds
+interrupts always occur at COUNT == *
+COUNT at point i==0:  x milliseconds
+COUNT at point i==7: 20 milliseconds --> reset to 0 milliseconds
 */
 void handle_interrupt(Tc *pTc, timer16_Sequence_t timer, CC_register_t cc_register) {
     // set previous servo LOW
@@ -259,12 +259,14 @@ void handle_interrupt(Tc *pTc, timer16_Sequence_t timer, CC_register_t cc_regist
 #elif defined(_use_Servo_variant_2)
 /*
 Variant 2 of handle_interrupt() function. Features:
+
 - Start of pulse train at COUNT == 0 for each CC register
 - seven interrupts for six pulses per cycle
+
 - points 1..5 are handled identically:
   -- set pin of servo in phase i-1 LOW
-  -- the next interrupt is set to happen at COUNT + current servo ticks
-- points 0 and 6 are different
+  -- the next interrupt is set to happen at COUNT = COUNT + current servo ticks
+- points 0 and 6 are different:
   - at point 0:
    -- there is no pin to set LOW
    -- rollover of COUNT is triggered
@@ -278,11 +280,10 @@ _______________________________
 | C0 | C1 | C2 | C3 | C4 | C5 |
 |____|____|____|____|____|____|__________  
 *    *    *    *    *    *    *      *      
-0    1    2    3    4    5    6      7      start of phase i
+0    1    2    3    4    5    6      0      point i
 
-interrupts occurs at COUNT == *
-COUNT@i==0:  0 milliseconds
-COUNT@i==6: 20 milliseconds
+interrupts always occur at COUNT == *
+COUNT at point i==0: 20 milliseconds --> reset to 0 milliseconds
 */
 void handle_interrupt(Tc *pTc, timer16_Sequence_t timer, CC_register_t cc_register) {
     // set previous servo LOW
@@ -330,18 +331,14 @@ void handle_interrupt(Tc *pTc, timer16_Sequence_t timer, CC_register_t cc_regist
 }
 #endif
 
-
 /*
- * On SAMD architecture, all interrupts generated from a single peripheral
+ * On SAMD architecture, all interrupts generated from a single TC instance
  * are ORed together. This means, that the ISR has to figure out by itself, 
  * which type of interrupt(s) was/were actually triggered.
  * This function does the "figuring out" and calls the final handler 
  * function handle_interrupt() with the proper parameters.
  */
 static inline void __attribute__((always_inline)) dispatch_interrupt(Tc *pTc, timer16_Sequence_t timer) {
-    // Note: To clear the interrupt flag, we have to write a *1* to 
-    // the corresponding bit in the INTFLAG register, not a *0*.
-    
     // Note:
     // Store bitpattern for INTFLAGs in a local variable. For some reason,
     // *all* INTFLAGs appear to be reset when setting new values to CCx.
@@ -357,7 +354,7 @@ static inline void __attribute__((always_inline)) dispatch_interrupt(Tc *pTc, ti
         handle_interrupt(pTc, timer, _cc1); // handle the interrupt
         pTc->COUNT16.INTFLAG.bit.MC1 = 1;   // reset match/capture interrupt flag of CC1
     }
-    // if handle_interrupt signals rollover for *both* CC registers, reset COUNT
+    // if handle_interrupt() signals rollover for *both* CC registers, reset COUNT
     if (rollover_flag[timer][_cc0] && rollover_flag[timer][_cc1]) {
         resetTcCounter16(pTc);
         rollover_flag[timer][_cc0] = false;

@@ -66,7 +66,7 @@
 
 // Definitions for processors taken from here: 
 // https://github.com/arduino/ArduinoModule-CMSIS-Atmel/blob/master/CMSIS-Atmel/CMSIS/Device/ATMEL/samd51/include/samd51.h
-// The list contains all SAMD51 processors (according to data sheet and as of april 2021).
+// The list contains all SAMD51 processors (according to data sheet as of April 2021).
 #if !defined(__SAMD51__)
   #if defined(__SAMD51G18A__) || defined(__ATSAMD51G18A__) \
   ||  defined(__SAMD51G19A__) || defined(__ATSAMD51G19A__) \
@@ -83,18 +83,16 @@
 
 /*
  * Use different TC instances for SAMD21 and SAMD51.
- * 
- * Notes:
- * 
- * For SAMD21, we use TC3 and TC4 as timers.
+* 
+ * For SAMD21, we use TC4 and TC5 as timers.
  * For SAMD51, we use TC0 and TC1 as timers.
  * Those TC instances are guaranteed to exist on all SAMD21 and SAMD51
  * processors, respectively.
  * 
- * TC4/TC5 on SAMD21 and TC0/TC1 on SAMD51 use the same peripheral clock,
- * respectively. If we configure the clock for one of these TC instances,
- * we *will* also configure the clock for the other. This means
- * that stuff on *both* TC instances will probably break when using this
+ * TC4/TC5 on SAMD21 and TC0/TC1 on SAMD51,respectively, use the same 
+ * peripheral clock. If we configure the clock for one of these TC instances,
+ * we *will* also configure the clock for the other. This means that 
+ * stuff on *both* TC instances will probably break when using this
  * library (most notably PWM with analogWrite()), no matter if we actually 
  * use both TC instances or only one.
  */
